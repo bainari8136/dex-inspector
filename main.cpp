@@ -1,5 +1,7 @@
 #include "DexParser.h"
 #include "DexFile.h"
+#include "DalvikDisassembler.h"
+#include "DexStatistics.h"
 #include <iostream>
 #include <string>
 #include <iomanip>
@@ -148,6 +150,95 @@ void printMethods(const DexFile& dexFile) {
     }
 }
 
+void printClasses(const DexFile& dexFile) {
+    std::cout << "\n=== CLASSES ===" << std::endl;
+    
+    auto classes = dexFile.getAllClasses();
+    std::cout << "Total classes: " << classes.size() << std::endl << std::endl;
+    
+    for (size_t i = 0; i < classes.size(); ++i) {
+        try {
+            const auto& classDef = classes[i];
+            std::string className = dexFile.getType(classDef.classIdx);
+            std::string superclass = dexFile.getSuperclass(i);
+            std::string sourceFile = dexFile.getSourceFile(i);
+            
+            std::cout << "[" << i << "] " << className << std::endl;
+            std::cout << "    Superclass: " << superclass << std::endl;
+            std::cout << "    Source File: " << (sourceFile.empty() ? "(none)" : sourceFile) << std::endl;
+            std::cout << "    Access Flags: 0x" << std::hex << classDef.accessFlags << std::dec << std::endl;
+            std::cout << "    Interfaces: " << (classDef.interfacesOffset == 0 ? "(none)" : "(present)") << std::endl;
+            std::cout << "    Annotations: " << (classDef.annotationsOffset == 0 ? "(none)" : "(present)") << std::endl;
+            std::cout << "    Class Data: " << (classDef.classDataOffset == 0 ? "(none)" : "(present)") << std::endl;
+            std::cout << "    Static Values: " << (classDef.staticValuesOffset == 0 ? "(none)" : "(present)") << std::endl;
+            std::cout << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[" << i << "] Error: " << e.what() << std::endl;
+        }
+    }
+}
+
+void printBytecode(const DexFile& dexFile) {
+    std::cout << "\n=== BYTECODE ===" << std::endl;
+    
+    auto classes = dexFile.getAllClasses();
+    auto methods = dexFile.getAllMethods();
+    
+    std::cout << "Scanning for bytecode..." << std::endl;
+    uint32_t bytecodeMethodCount = 0;
+    uint32_t totalBytecodeSize = 0;
+
+    for (size_t classIdx = 0; classIdx < classes.size(); ++classIdx) {
+        try {
+            const auto& classDef = classes[classIdx];
+            
+            // Skip if no class data
+            if (classDef.classDataOffset == 0) {
+                continue;
+            }
+            
+            ClassData classData = dexFile.getClassData(classDef.classDataOffset);
+            
+            // Process all methods (direct and virtual)
+            std::vector<EncodedMethod> allClassMethods = classData.directMethods;
+            allClassMethods.insert(allClassMethods.end(), classData.virtualMethods.begin(), classData.virtualMethods.end());
+            
+            for (const auto& encodedMethod : allClassMethods) {
+                if (encodedMethod.codeOff == 0) {
+                    continue;  // Abstract or native method
+                }
+                
+                bytecodeMethodCount++;
+                try {
+                    CodeItem codeItem = dexFile.getCodeItem(encodedMethod.codeOff);
+                    totalBytecodeSize += codeItem.insnsSize * 2;  // insnsSize is in 16-bit words
+                    
+                    // Show sample of this method
+                    if (bytecodeMethodCount <= 5) {  // Show first 5 methods only
+                        if (encodedMethod.methodIdx < methods.size()) {
+                            std::string methodName = dexFile.getString(methods[encodedMethod.methodIdx].nameIdx);
+                            std::cout << "\nMethod [" << bytecodeMethodCount << "]: " << methodName << std::endl;
+                            std::cout << "  Instructions: " << codeItem.insnsSize << " words (" << (codeItem.insnsSize * 2) << " bytes)" << std::endl;
+                            std::cout << "  Registers: " << codeItem.registersSize << std::endl;
+                            std::cout << "  Args: " << codeItem.insSize << std::endl;
+                            std::cout << "  Outs: " << codeItem.outsSize << std::endl;
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Error parsing code item: " << e.what() << std::endl;
+                }
+            }
+        } catch (const std::exception& e) {
+            // Skip class if error
+            continue;
+        }
+    }
+    
+    std::cout << "\n--- Bytecode Summary ---" << std::endl;
+    std::cout << "Methods with bytecode: " << bytecodeMethodCount << std::endl;
+    std::cout << "Total bytecode size: " << totalBytecodeSize << " bytes (" << (totalBytecodeSize / 1024.0) << " KB)" << std::endl;
+}
+
 void printUsage(const char* programName) {
     std::cout << "DEX Inspector - Parse and display DEX file contents\n" << std::endl;
     std::cout << "Usage: " << programName << " <dex-file> [options]\n" << std::endl;
@@ -158,6 +249,9 @@ void printUsage(const char* programName) {
               << "  --protos    Display all protos from proto IDs section (Phase 2)\n"
               << "  --fields    Display all fields from field IDs section (Phase 2)\n"
               << "  --methods   Display all methods from method IDs section (Phase 2)\n"
+              << "  --classes   Display all classes from class defs section (Phase 3)\n"
+              << "  --bytecode  Display bytecode and instruction statistics (Phase 4)\n"
+              << "  --statistics Display DEX file statistics (Phase 4)\n"
               << "  --all       Display all available information (default)\n"
               << "  --help      Show this help message\n" << std::endl;
 }
@@ -191,6 +285,9 @@ int main(int argc, char* argv[]) {
         bool showProtos = showAll || false;
         bool showFields = showAll || false;
         bool showMethods = showAll || false;
+        bool showClasses = showAll || false;
+        bool showBytecode = false;
+        bool showStatistics = false;
 
         // Parse CLI flags
         for (int i = 2; i < argc; ++i) {
@@ -206,6 +303,12 @@ int main(int argc, char* argv[]) {
                 showFields = true;
             } else if (std::strcmp(argv[i], "--methods") == 0) {
                 showMethods = true;
+            } else if (std::strcmp(argv[i], "--classes") == 0) {
+                showClasses = true;
+            } else if (std::strcmp(argv[i], "--bytecode") == 0) {
+                showBytecode = true;
+            } else if (std::strcmp(argv[i], "--statistics") == 0) {
+                showStatistics = true;
             } else if (std::strcmp(argv[i], "--all") == 0) {
                 showHeader = true;
                 showStrings = true;
@@ -213,6 +316,9 @@ int main(int argc, char* argv[]) {
                 showProtos = true;
                 showFields = true;
                 showMethods = true;
+                showClasses = true;
+                showBytecode = true;
+                showStatistics = true;
             } else {
                 std::cerr << "Unknown option: " << argv[i] << std::endl;
                 printUsage(argv[0]);
@@ -243,6 +349,15 @@ int main(int argc, char* argv[]) {
         }
         if (showMethods || showAll) {
             printMethods(*dexFile);
+        }
+        if (showClasses || showAll) {
+            printClasses(*dexFile);
+        }
+        if (showBytecode) {
+            printBytecode(*dexFile);
+        }
+        if (showStatistics) {
+            DexStatistics::printStatistics(*dexFile);
         }
 
         std::cout << "\n=== PARSING SUCCESSFUL ===" << std::endl;

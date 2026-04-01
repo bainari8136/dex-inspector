@@ -20,11 +20,18 @@ add_executable(dex-inspector
     Leb128.cpp
     DexFile.cpp
     DexParser.cpp
+    DalvikDisassembler.cpp
+    DexStatistics.cpp
     sections/StringIds.cpp
     sections/TypeIds.cpp
     sections/ProtoIds.cpp
     sections/MethodIds.cpp
     sections/FieldIds.cpp
+    sections/ClassDefs.cpp
+    sections/EncodedField.cpp
+    sections/EncodedMethod.cpp
+    sections/ClassData.cpp
+    sections/CodeItem.cpp
 )
 
 # Include directories

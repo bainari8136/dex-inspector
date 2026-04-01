@@ -73,6 +73,9 @@ std::unique_ptr<DexFile> DexFile::parseFile(const std::string& filePath) {
     // Load method IDs (Phase 2)
     dexFile->mMethods = MethodIds::parse(data, dexFile->mHeader.methodIdsOffset, dexFile->mHeader.methodIdsSize);
 
+    // Load class defs (Phase 3)
+    dexFile->mClasses = ClassDefs::parse(data, dexFile->mHeader.classDefsOffset, dexFile->mHeader.classDefsSize);
+
     return dexFile;
 }
 
@@ -144,4 +147,71 @@ const MethodId& DexFile::getMethod(uint32_t methodIdx) const {
         throw std::out_of_range("Method index out of range");
     }
     return mMethods[methodIdx];
+}
+
+std::vector<ClassDef> DexFile::getAllClasses() const {
+    return mClasses;
+}
+
+const ClassDef& DexFile::getClass(uint32_t classIdx) const {
+    if (classIdx >= mClasses.size()) {
+        throw std::out_of_range("Class index out of range");
+    }
+    return mClasses[classIdx];
+}
+
+std::string DexFile::getSuperclass(uint32_t classIdx) const {
+    if (classIdx >= mClasses.size()) {
+        throw std::out_of_range("Class index out of range");
+    }
+
+    uint32_t superclassTypeIdx = mClasses[classIdx].superclassIdx;
+    
+    // NO_INDEX is 0xFFFFFFFF
+    if (superclassTypeIdx == 0xFFFFFFFF) {
+        return "Ljava/lang/Object;";
+    }
+
+    try {
+        return getType(superclassTypeIdx);
+    } catch (const std::exception&) {
+        return "";
+    }
+}
+
+std::string DexFile::getSourceFile(uint32_t classIdx) const {
+    if (classIdx >= mClasses.size()) {
+        throw std::out_of_range("Class index out of range");
+    }
+
+    uint32_t sourceFileStringIdx = mClasses[classIdx].sourceFileIdx;
+    
+    // NO_INDEX is 0xFFFFFFFF
+    if (sourceFileStringIdx == 0xFFFFFFFF) {
+        return "";
+    }
+
+    try {
+        return getString(sourceFileStringIdx);
+    } catch (const std::exception&) {
+        return "";
+    }
+}
+
+ClassData DexFile::getClassData(uint32_t offset) const {
+    if (offset == 0) {
+        throw std::out_of_range("Class data offset is zero");
+    }
+    return ClassDataParser::parse(mReader->getRawData(), offset);
+}
+
+CodeItem DexFile::getCodeItem(uint32_t offset) const {
+    if (offset == 0) {
+        throw std::out_of_range("Code item offset is zero");
+    }
+    return CodeItemParser::parse(mReader->getRawData(), offset);
+}
+
+const uint8_t* DexFile::getRawData() const {
+    return mReader->getRawData();
 }
