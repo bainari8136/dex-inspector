@@ -283,5 +283,3 @@ For questions or issues:
 
 ---
 
-Generated: April 1, 2026
-Project Location: `C:\Users\Victor GM\.gemini\antigravity\scratch\dex-inspector`
